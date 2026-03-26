@@ -3,11 +3,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { cgpaGradeLabel, calculateCGPA } from '@/lib/calculators/cgpa';
 import type { CGPAEntry, CGPASubjectSetup } from '@/lib/types';
+import { revealElement } from '@/lib/dom/revealElement';
+import { useAppHaptics } from '@/lib/hooks/useAppHaptics';
+import { createId } from '@/lib/utils/createId';
 
 const HELP_KEY = 'grade-calc-help-state';
 type Mode = 'semester' | 'subject';
 
 export default function CGPACalculator() {
+  const haptics = useAppHaptics();
   const [mode, setMode] = useState<Mode>('semester');
   const [entries, setEntries] = useState<CGPAEntry[]>([]);
   const [subjectSetup, setSubjectSetup] = useState<CGPASubjectSetup | null>(null);
@@ -31,6 +35,15 @@ export default function CGPACalculator() {
   const [subCredits, setSubCredits] = useState('');
 
   const panelRef = useRef<HTMLDivElement>(null);
+  const semNameInputRef = useRef<HTMLInputElement>(null);
+  const sgpaInputRef = useRef<HTMLInputElement>(null);
+  const semCreditsInputRef = useRef<HTMLInputElement>(null);
+  const prevCGPAInputRef = useRef<HTMLInputElement>(null);
+  const prevCreditsInputRef = useRef<HTMLInputElement>(null);
+  const numSubjectsInputRef = useRef<HTMLInputElement>(null);
+  const subNameInputRef = useRef<HTMLInputElement>(null);
+  const subGPInputRef = useRef<HTMLInputElement>(null);
+  const subCreditsInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     try {
@@ -39,15 +52,19 @@ export default function CGPACalculator() {
     } catch {}
   }, []);
 
+  const showValidationError = (message: string) => {
+    haptics.error();
+    alert(message);
+  };
+
   const toggleHelp = () => {
-    setHelpOpen((prev) => {
-      const next = !prev;
-      try {
-        const saved = JSON.parse(localStorage.getItem(HELP_KEY) || '{}');
-        localStorage.setItem(HELP_KEY, JSON.stringify({ ...saved, cgpa: next }));
-      } catch {}
-      return next;
-    });
+    const next = !helpOpen;
+    setHelpOpen(next);
+    try {
+      const saved = JSON.parse(localStorage.getItem(HELP_KEY) || '{}');
+      localStorage.setItem(HELP_KEY, JSON.stringify({ ...saved, cgpa: next }));
+    } catch {}
+    haptics.light();
   };
 
   useEffect(() => {
@@ -87,25 +104,41 @@ export default function CGPACalculator() {
   };
 
   const switchMode = (m: Mode) => {
+    if (m === mode) return;
     setMode(m);
+    haptics.selection();
     if (m === 'subject') populateSubjectSetup(entries);
   };
 
   // Semester mode actions
   const addSemester = () => {
-    const n = semName.trim();
-    const gp = parseFloat(sgpa);
-    const cr = parseFloat(semCredits);
-    if (!n || isNaN(gp) || isNaN(cr)) { alert('fill all the fields bro'); return; }
-    if (gp < 0 || gp > 10) { alert('sgpa has to be between 0 and 10. are you okay?'); return; }
-    if (cr <= 0) { alert('credits cant be zero or negative lol'); return; }
-    setEntries((prev) => [...prev, { id: crypto.randomUUID(), label: n, gp, credits: cr }]);
+    const n = (semNameInputRef.current?.value ?? semName).trim();
+    const gp = parseFloat(sgpaInputRef.current?.value ?? sgpa);
+    const cr = parseFloat(semCreditsInputRef.current?.value ?? semCredits);
+    if (!n || isNaN(gp) || isNaN(cr)) {
+      showValidationError('fill all the fields bro');
+      return;
+    }
+    if (gp < 0 || gp > 10) {
+      showValidationError('sgpa has to be between 0 and 10. are you okay?');
+      return;
+    }
+    if (cr <= 0) {
+      showValidationError('credits cant be zero or negative lol');
+      return;
+    }
+    setEntries((prev) => [...prev, { id: createId(), label: n, gp, credits: cr }]);
     setSemName('');
     setSgpa('');
     setSemCredits('');
+    haptics.success();
+    revealElement('cgpa-semester-results');
   };
 
-  const deleteSemEntry = (id: string) => setEntries((prev) => prev.filter((e) => e.id !== id));
+  const deleteSemEntry = (id: string) => {
+    haptics.warning();
+    setEntries((prev) => prev.filter((e) => e.id !== id));
+  };
 
   const updateSemEntry = (id: string, field: 'gp' | 'credits', value: string) => {
     const num = parseFloat(value);
@@ -115,39 +148,63 @@ export default function CGPACalculator() {
 
   // Subject mode — setup step
   const startSubjectMode = () => {
-    const pc = parseFloat(prevCGPA) || 0;
-    const pcr = parseFloat(prevCredits) || 0;
-    const ns = parseInt(numSubjects);
-    if (isNaN(ns) || ns <= 0) { alert('how many subjects this sem bro?'); return; }
-    if (pc < 0 || pc > 10) { alert('that cgpa doesnt look right lol'); return; }
-    if (pcr < 0) { alert('credits cant be negative'); return; }
+    const pc = parseFloat(prevCGPAInputRef.current?.value ?? prevCGPA) || 0;
+    const pcr = parseFloat(prevCreditsInputRef.current?.value ?? prevCredits) || 0;
+    const ns = parseInt(numSubjectsInputRef.current?.value ?? numSubjects);
+    if (isNaN(ns) || ns <= 0) {
+      showValidationError('how many subjects this sem bro?');
+      return;
+    }
+    if (pc < 0 || pc > 10) {
+      showValidationError('that cgpa doesnt look right lol');
+      return;
+    }
+    if (pcr < 0) {
+      showValidationError('credits cant be negative');
+      return;
+    }
     if (pc > 0 && pcr === 0) {
-      alert('if you have a cgpa, you must have some credits too. put the total credits from all previous sems');
+      showValidationError('if you have a cgpa, you must have some credits too. put the total credits from all previous sems');
       return;
     }
     setSubjectSetup({ prevCGPA: pc, prevCredits: pcr, totalSubjects: ns });
     setCurrentSubjects([]);
+    haptics.medium();
   };
 
   const addSubject = () => {
     if (!subjectSetup) return;
     if (currentSubjects.length >= subjectSetup.totalSubjects) {
-      alert('you already added all the subjects! hit "change setup" if you made a mistake');
+      showValidationError('you already added all the subjects! hit "change setup" if you made a mistake');
       return;
     }
-    const n = subName.trim();
-    const gp = parseFloat(subGP);
-    const cr = parseFloat(subCredits);
-    if (!n || isNaN(gp) || isNaN(cr)) { alert('fill all the fields bro'); return; }
-    if (gp < 0 || gp > 10) { alert('grade point has to be between 0 and 10. are you okay?'); return; }
-    if (cr <= 0) { alert('credits cant be zero or negative lol'); return; }
-    setCurrentSubjects((prev) => [...prev, { id: crypto.randomUUID(), label: n, gp, credits: cr }]);
+    const n = (subNameInputRef.current?.value ?? subName).trim();
+    const gp = parseFloat(subGPInputRef.current?.value ?? subGP);
+    const cr = parseFloat(subCreditsInputRef.current?.value ?? subCredits);
+    if (!n || isNaN(gp) || isNaN(cr)) {
+      showValidationError('fill all the fields bro');
+      return;
+    }
+    if (gp < 0 || gp > 10) {
+      showValidationError('grade point has to be between 0 and 10. are you okay?');
+      return;
+    }
+    if (cr <= 0) {
+      showValidationError('credits cant be zero or negative lol');
+      return;
+    }
+    setCurrentSubjects((prev) => [...prev, { id: createId(), label: n, gp, credits: cr }]);
     setSubName('');
     setSubGP('');
     setSubCredits('');
+    haptics.success();
+    revealElement('cgpa-subject-results');
   };
 
-  const deleteSubject = (id: string) => setCurrentSubjects((prev) => prev.filter((e) => e.id !== id));
+  const deleteSubject = (id: string) => {
+    haptics.warning();
+    setCurrentSubjects((prev) => prev.filter((e) => e.id !== id));
+  };
 
   const updateSubject = (id: string, field: 'gp' | 'credits', value: string) => {
     const num = parseFloat(value);
@@ -156,6 +213,7 @@ export default function CGPACalculator() {
   };
 
   const resetSubjectMode = () => {
+    haptics.selection();
     setSubjectSetup(null);
     setCurrentSubjects([]);
     populateSubjectSetup(entries);
@@ -248,25 +306,25 @@ export default function CGPACalculator() {
             <div className="form-grid form-grid--4">
               <div className="field">
                 <label>semester (e.g. S3, S5)</label>
-                <input type="text" value={semName} onChange={(e) => setSemName(e.target.value)}
-                  placeholder="S3" onKeyDown={(e) => e.key === 'Enter' && addSemester()} />
-              </div>
-              <div className="field">
-                <label>sgpa (from grade card)</label>
-                <input type="number" value={sgpa} onChange={(e) => setSgpa(e.target.value)}
-                  placeholder="7.8" step="0.01" min="0" max="10" onKeyDown={(e) => e.key === 'Enter' && addSemester()} />
-              </div>
-              <div className="field">
-                <label>total credits that sem</label>
-                <input type="number" value={semCredits} onChange={(e) => setSemCredits(e.target.value)}
-                  placeholder="22" onKeyDown={(e) => e.key === 'Enter' && addSemester()} />
-              </div>
-              <div className="field">
-                <label>&nbsp;</label>
-                <button className="btn-add" style={{ background: '#ffaa00', color: '#0a0a0a' }} onClick={addSemester}>
-                  add sem
-                </button>
-              </div>
+                    <input ref={semNameInputRef} type="text" value={semName} onChange={(e) => setSemName(e.target.value)}
+                      placeholder="S3" onKeyDown={(e) => e.key === 'Enter' && addSemester()} />
+                  </div>
+                  <div className="field">
+                    <label>sgpa (from grade card)</label>
+                    <input ref={sgpaInputRef} type="number" value={sgpa} onChange={(e) => setSgpa(e.target.value)}
+                      placeholder="7.8" step="0.01" min="0" max="10" onKeyDown={(e) => e.key === 'Enter' && addSemester()} />
+                  </div>
+                  <div className="field">
+                    <label>total credits that sem</label>
+                    <input ref={semCreditsInputRef} type="number" value={semCredits} onChange={(e) => setSemCredits(e.target.value)}
+                      placeholder="22" onKeyDown={(e) => e.key === 'Enter' && addSemester()} />
+                  </div>
+                  <div className="field">
+                    <label>&nbsp;</label>
+                    <button type="button" className="btn-add" style={{ background: '#ffaa00', color: '#0a0a0a' }} onClick={addSemester}>
+                      add sem
+                    </button>
+                  </div>
             </div>
           </div>
         )}
@@ -290,22 +348,22 @@ export default function CGPACalculator() {
                 <div className="form-grid form-grid--setup">
                   <div className="field">
                     <label>your cgpa so far (put 0 if s1/s2)</label>
-                    <input type="number" value={prevCGPA} onChange={(e) => setPrevCGPA(e.target.value)}
+                    <input ref={prevCGPAInputRef} type="number" value={prevCGPA} onChange={(e) => setPrevCGPA(e.target.value)}
                       placeholder="7.5" step="0.01" min="0" max="10" />
                   </div>
                   <div className="field">
                     <label>total credits earned so far (0 if s1/s2)</label>
-                    <input type="number" value={prevCredits} onChange={(e) => setPrevCredits(e.target.value)}
+                    <input ref={prevCreditsInputRef} type="number" value={prevCredits} onChange={(e) => setPrevCredits(e.target.value)}
                       placeholder="80" min="0" />
                   </div>
                   <div className="field">
                     <label>how many subjects this sem?</label>
-                    <input type="number" value={numSubjects} onChange={(e) => setNumSubjects(e.target.value)}
+                    <input ref={numSubjectsInputRef} type="number" value={numSubjects} onChange={(e) => setNumSubjects(e.target.value)}
                       placeholder="6" min="1" max="20" onKeyDown={(e) => e.key === 'Enter' && startSubjectMode()} />
                   </div>
                   <div className="field">
                     <label>&nbsp;</label>
-                    <button className="btn-add" style={{ background: '#ffaa00', color: '#0a0a0a' }} onClick={startSubjectMode}>
+                    <button type="button" className="btn-add" style={{ background: '#ffaa00', color: '#0a0a0a' }} onClick={startSubjectMode}>
                       let&apos;s go →
                     </button>
                   </div>
@@ -322,22 +380,22 @@ export default function CGPACalculator() {
                 <div className="form-grid form-grid--4">
                   <div className="field">
                     <label>subject name</label>
-                    <input type="text" value={subName} onChange={(e) => setSubName(e.target.value)}
+                    <input ref={subNameInputRef} type="text" value={subName} onChange={(e) => setSubName(e.target.value)}
                       placeholder="Signals & Systems" onKeyDown={(e) => e.key === 'Enter' && addSubject()} />
                   </div>
                   <div className="field">
                     <label>grade point</label>
-                    <input type="number" value={subGP} onChange={(e) => setSubGP(e.target.value)}
+                    <input ref={subGPInputRef} type="number" value={subGP} onChange={(e) => setSubGP(e.target.value)}
                       placeholder="8.5" step="0.5" min="0" max="10" onKeyDown={(e) => e.key === 'Enter' && addSubject()} />
                   </div>
                   <div className="field">
                     <label>credits</label>
-                    <input type="number" value={subCredits} onChange={(e) => setSubCredits(e.target.value)}
+                    <input ref={subCreditsInputRef} type="number" value={subCredits} onChange={(e) => setSubCredits(e.target.value)}
                       placeholder="4" onKeyDown={(e) => e.key === 'Enter' && addSubject()} />
                   </div>
                   <div className="field">
                     <label>&nbsp;</label>
-                    <button className="btn-add" style={{ background: '#ffaa00', color: '#0a0a0a' }}
+                    <button type="button" className="btn-add" style={{ background: '#ffaa00', color: '#0a0a0a' }}
                       disabled={currentSubjects.length >= subjectSetup.totalSubjects}
                       onClick={addSubject}>
                       add
@@ -358,37 +416,31 @@ export default function CGPACalculator() {
 
       {/* CGPA Result Banner */}
       {cgpaResult && (
-        <div style={{
-          display: 'block',
-          background: '#111',
-          borderLeft: '3px solid #ffaa00',
-          padding: '22px 26px',
-          marginBottom: 20,
-          fontFamily: 'var(--font-jetbrains-mono,monospace)',
-          opacity: isComplete ? 1 : 0.35,
-          transition: 'opacity 0.2s',
-        }}>
-          <div style={{ fontSize: 13, color: '#555', marginBottom: 10 }}>your cgpa (so far):</div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 18, flexWrap: 'wrap' }}>
-            <span style={{ color: '#ffaa00', fontSize: 48, fontWeight: 700, letterSpacing: -2 }}>
+        <div className={`cgpa-overview${isComplete ? '' : ' is-pending'}`}>
+          <div className="cgpa-overview-kicker">your cgpa (so far):</div>
+          <div className="cgpa-overview-main">
+            <span className="cgpa-overview-value">
               {isComplete ? cgpaResult.cgpa.toFixed(2) : '...'}
             </span>
-            <span style={{ fontSize: 15, color: '#888', fontStyle: 'italic' }}>
-              {isComplete ? cgpaGradeLabel(cgpaResult.cgpa) : '— add all subjects first'}
+            <span className="cgpa-overview-caption">
+              {isComplete ? cgpaGradeLabel(cgpaResult.cgpa) : 'add all subjects first'}
             </span>
           </div>
-          <div style={{ display: 'flex', gap: 32, marginTop: 14, fontSize: 14, flexWrap: 'wrap', color: '#555' }}>
-            <span>credits counted: <span style={{ color: '#e0e0e0' }}>{cgpaResult.totalCredits}</span></span>
-            <span>
-              sems / subjects:{' '}
-              <span style={{ color: '#e0e0e0' }}>
+          <div className="cgpa-overview-stats">
+            <div className="cgpa-overview-stat">
+              <span>credits counted</span>
+              <strong>{cgpaResult.totalCredits}</strong>
+            </div>
+            <div className="cgpa-overview-stat">
+              <span>sems / subjects</span>
+              <strong>
                 {mode === 'semester'
                   ? `${entries.length} sem(s)`
                   : subjectSetup
                     ? `${currentSubjects.length} / ${subjectSetup.totalSubjects} subjects`
                     : '0'}
-              </span>
-            </span>
+              </strong>
+            </div>
           </div>
         </div>
       )}
@@ -435,12 +487,15 @@ function SemesterTable({
   onUpdate: (id: string, field: 'gp' | 'credits', value: string) => void;
 }) {
   return (
-    <div className="subject" style={{ borderLeftColor: '#ffaa00' }}>
+    <div className="subject" id="cgpa-semester-results" style={{ borderLeftColor: '#ffaa00' }}>
       <div className="subject-top">
-        <div className="subject-name" style={{ color: '#ffaa00' }}>semesters</div>
+        <div>
+          <div className="subject-name" style={{ color: '#ffaa00' }}>semesters</div>
+          <div className="subject-caption">tap any number below to fix it.</div>
+        </div>
       </div>
-      <div className="grades-table">
-        <table>
+      <div className="grades-table grades-table--cgpa">
+        <table className="cgpa-table">
           <thead>
             <tr>
               <th>semester</th>
@@ -451,31 +506,35 @@ function SemesterTable({
             </tr>
           </thead>
           <tbody>
-            {entries.map((e) => (
-              <tr key={e.id}>
-                <td style={{ color: '#e0e0e0' }}>{e.label}</td>
-                <td>
+            {entries.map((e, index) => (
+              <tr key={e.id} className="cgpa-entry-row">
+                <td data-label="semester" className="cgpa-table-title-cell">
+                  <span className="cgpa-entry-label">{e.label}</span>
+                </td>
+                <td data-label="sgpa">
                   <input type="number" className="cgpa-edit-input" defaultValue={e.gp.toFixed(2)}
                     step="0.01" min="0" max="10"
                     onChange={(ev) => onUpdate(e.id, 'gp', ev.target.value)} title="edit sgpa" />
                 </td>
-                <td>
+                <td data-label="credits">
                   <input type="number" className="cgpa-edit-input" defaultValue={e.credits}
                     step="0.5" min="0.5"
                     onChange={(ev) => onUpdate(e.id, 'credits', ev.target.value)} title="edit credits" />
                 </td>
-                <td style={{ color: '#555', fontFamily: 'var(--font-jetbrains-mono,monospace)' }}>{(e.gp * e.credits).toFixed(2)}</td>
-                <td><button className="btn-delete" onClick={() => onDelete(e.id)}>delete</button></td>
+                <td data-label="sgpa x credits" className="cgpa-cell-muted">{(e.gp * e.credits).toFixed(2)}</td>
+                <td data-label="action"><button className="btn-delete" onClick={() => onDelete(e.id)}>delete</button></td>
               </tr>
             ))}
           </tbody>
           <tfoot>
-            <tr style={{ borderTop: '1px solid #333' }}>
-              <td style={{ color: '#555', fontFamily: 'var(--font-jetbrains-mono,monospace)', padding: '10px 12px' }}>cgpa</td>
-              <td><span style={{ color: '#ffaa00', fontWeight: 700, fontFamily: 'var(--font-jetbrains-mono,monospace)' }}>{cgpaResult.cgpa.toFixed(2)}</span></td>
-              <td style={{ color: '#e0e0e0', fontFamily: 'var(--font-jetbrains-mono,monospace)' }}>{cgpaResult.totalCredits}</td>
-              <td style={{ color: '#555', fontFamily: 'var(--font-jetbrains-mono,monospace)' }}>{cgpaResult.weightedSum.toFixed(2)}</td>
-              <td></td>
+            <tr className="cgpa-summary-row">
+              <td data-label="summary" className="cgpa-table-title-cell">
+                <span className="cgpa-entry-label cgpa-entry-label--summary">cgpa</span>
+              </td>
+              <td data-label="cgpa"><span className="cgpa-value-highlight">{cgpaResult.cgpa.toFixed(2)}</span></td>
+              <td data-label="credits" className="cgpa-value-default">{cgpaResult.totalCredits}</td>
+              <td data-label="weighted" className="cgpa-cell-muted">{cgpaResult.weightedSum.toFixed(2)}</td>
+              <td />
             </tr>
           </tfoot>
         </table>
@@ -505,14 +564,17 @@ function SubjectTable({
   const cgpa = totalCredits > 0 ? totalWeighted / totalCredits : 0;
 
   return (
-    <div className="subject" style={{ borderLeftColor: isComplete ? '#ffaa00' : '#333' }}>
+    <div className="subject" id="cgpa-subject-results" style={{ borderLeftColor: isComplete ? '#ffaa00' : '#333' }}>
       <div className="subject-top">
-        <div className="subject-name" style={{ color: isComplete ? '#ffaa00' : '#666' }}>
-          {isComplete ? 'this semester — all done ✓' : `this semester — ${subjects.length} / ${totalSubjects} added`}
+        <div>
+          <div className="subject-name" style={{ color: isComplete ? '#ffaa00' : '#666' }}>
+            {isComplete ? 'this semester - all done ✓' : `this semester - ${subjects.length} / ${totalSubjects} added`}
+          </div>
+          <div className="subject-caption">every subject stays editable down here.</div>
         </div>
       </div>
-      <div className="grades-table">
-        <table>
+      <div className="grades-table grades-table--cgpa">
+        <table className="cgpa-table">
           <thead>
             <tr>
               <th>subject</th>
@@ -524,39 +586,49 @@ function SubjectTable({
           </thead>
           <tbody>
             {prevCredits > 0 && (
-              <tr style={{ borderBottom: '1px solid #222' }}>
-                <td style={{ color: '#555', fontStyle: 'italic', fontFamily: 'var(--font-jetbrains-mono,monospace)' }}>previous sems (base)</td>
-                <td><span style={{ color: '#555', fontFamily: 'var(--font-jetbrains-mono,monospace)' }}>{prevCGPA.toFixed(2)}</span></td>
-                <td style={{ color: '#555' }}>{prevCredits}</td>
-                <td style={{ color: '#444', fontFamily: 'var(--font-jetbrains-mono,monospace)' }}>{prevW.toFixed(2)}</td>
-                <td></td>
+              <tr className="cgpa-base-row">
+                <td data-label="base" className="cgpa-table-title-cell">
+                  <span className="cgpa-entry-label cgpa-entry-label--base">previous sems (base)</span>
+                </td>
+                <td data-label="cgpa" className="cgpa-cell-muted">{prevCGPA.toFixed(2)}</td>
+                <td data-label="credits" className="cgpa-cell-muted">{prevCredits}</td>
+                <td data-label="weighted" className="cgpa-cell-muted">{prevW.toFixed(2)}</td>
+                <td />
               </tr>
             )}
             {subjects.map((e) => (
-              <tr key={e.id}>
-                <td style={{ color: '#e0e0e0' }}>{e.label}</td>
-                <td>
+              <tr key={e.id} className="cgpa-entry-row">
+                <td data-label="subject" className="cgpa-table-title-cell">
+                  <span className="cgpa-entry-label">{e.label}</span>
+                </td>
+                <td data-label="grade point">
                   <input type="number" className="cgpa-edit-input" defaultValue={e.gp.toFixed(2)}
                     step="0.5" min="0" max="10"
                     onChange={(ev) => onUpdate(e.id, 'gp', ev.target.value)} title="edit grade point" />
                 </td>
-                <td>
+                <td data-label="credits">
                   <input type="number" className="cgpa-edit-input" defaultValue={e.credits}
                     step="0.5" min="0.5"
                     onChange={(ev) => onUpdate(e.id, 'credits', ev.target.value)} title="edit credits" />
                 </td>
-                <td style={{ color: '#555', fontFamily: 'var(--font-jetbrains-mono,monospace)' }}>{(e.gp * e.credits).toFixed(2)}</td>
-                <td><button className="btn-delete" onClick={() => onDelete(e.id)}>delete</button></td>
+                <td data-label="gp x credits" className="cgpa-cell-muted">{(e.gp * e.credits).toFixed(2)}</td>
+                <td data-label="action"><button className="btn-delete" onClick={() => onDelete(e.id)}>delete</button></td>
               </tr>
             ))}
           </tbody>
           <tfoot>
-            <tr style={{ borderTop: '1px solid #333' }}>
-              <td style={{ color: '#555', fontFamily: 'var(--font-jetbrains-mono,monospace)', padding: '10px 12px' }}>updated cgpa</td>
-              <td><span style={{ color: isComplete ? '#ffaa00' : '#555', fontWeight: 700, fontFamily: 'var(--font-jetbrains-mono,monospace)' }}>{isComplete ? cgpa.toFixed(2) : '?'}</span></td>
-              <td style={{ color: '#e0e0e0', fontFamily: 'var(--font-jetbrains-mono,monospace)' }}>{totalCredits}</td>
-              <td style={{ color: '#555', fontFamily: 'var(--font-jetbrains-mono,monospace)' }}>{totalWeighted.toFixed(2)}</td>
-              <td></td>
+            <tr className="cgpa-summary-row">
+              <td data-label="summary" className="cgpa-table-title-cell">
+                <span className="cgpa-entry-label cgpa-entry-label--summary">updated cgpa</span>
+              </td>
+              <td data-label="cgpa">
+                <span className={isComplete ? 'cgpa-value-highlight' : 'cgpa-cell-muted'}>
+                  {isComplete ? cgpa.toFixed(2) : '?'}
+                </span>
+              </td>
+              <td data-label="credits" className="cgpa-value-default">{totalCredits}</td>
+              <td data-label="weighted" className="cgpa-cell-muted">{totalWeighted.toFixed(2)}</td>
+              <td />
             </tr>
           </tfoot>
         </table>

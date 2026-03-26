@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
+import HapticLink from '@/components/ui/HapticLink';
 
 export const metadata: Metadata = {
   title: 'help-me-survive-college — ESE, Attendance & CGPA Calculators',
@@ -50,10 +50,11 @@ export default function HomePage() {
 
         <div className="tool-cards-grid">
           {tools.map((tool) => (
-            <Link
+            <HapticLink
               key={tool.href}
               href={tool.href}
               className="tool-card"
+              feedback="medium"
               style={{
                 '--card-accent': tool.accent,
                 '--card-glow': tool.glow,
@@ -69,7 +70,7 @@ export default function HomePage() {
                   <span key={kw} className="kw-tag">{kw}</span>
                 ))}
               </div>
-            </Link>
+            </HapticLink>
           ))}
         </div>
       </div>

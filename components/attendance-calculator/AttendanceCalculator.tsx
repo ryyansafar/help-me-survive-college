@@ -4,10 +4,14 @@ import { useState, useEffect, useRef } from 'react';
 import { calculateSafeMisses, calculateRecovery } from '@/lib/calculators/attendance';
 import type { AttendanceSubject } from '@/lib/types';
 import EmptyState from '@/components/ui/EmptyState';
+import { revealElement } from '@/lib/dom/revealElement';
+import { useAppHaptics } from '@/lib/hooks/useAppHaptics';
+import { createId } from '@/lib/utils/createId';
 
 const HELP_KEY = 'grade-calc-help-state';
 
 export default function AttendanceCalculator() {
+  const haptics = useAppHaptics();
   const [subjects, setSubjects] = useState<AttendanceSubject[]>([]);
   const [helpOpen, setHelpOpen] = useState(false);
 
@@ -17,6 +21,10 @@ export default function AttendanceCalculator() {
   const [minReq, setMinReq] = useState('75');
 
   const panelRef = useRef<HTMLDivElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const totalInputRef = useRef<HTMLInputElement>(null);
+  const missedInputRef = useRef<HTMLInputElement>(null);
+  const minReqInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     try {
@@ -25,15 +33,19 @@ export default function AttendanceCalculator() {
     } catch {}
   }, []);
 
+  const showValidationError = (message: string) => {
+    haptics.error();
+    alert(message);
+  };
+
   const toggleHelp = () => {
-    setHelpOpen((prev) => {
-      const next = !prev;
-      try {
-        const saved = JSON.parse(localStorage.getItem(HELP_KEY) || '{}');
-        localStorage.setItem(HELP_KEY, JSON.stringify({ ...saved, attendance: next }));
-      } catch {}
-      return next;
-    });
+    const next = !helpOpen;
+    setHelpOpen(next);
+    try {
+      const saved = JSON.parse(localStorage.getItem(HELP_KEY) || '{}');
+      localStorage.setItem(HELP_KEY, JSON.stringify({ ...saved, attendance: next }));
+    } catch {}
+    haptics.light();
   };
 
   useEffect(() => {
@@ -56,20 +68,33 @@ export default function AttendanceCalculator() {
   }, [helpOpen]);
 
   const addSubject = () => {
-    const n = name.trim();
-    const t = parseInt(total);
-    const m = parseInt(missed);
-    const r = parseFloat(minReq);
-    if (!n || isNaN(t) || isNaN(m) || isNaN(r)) return;
-    if (m > t) { alert('missed classes cant be more than total classes'); return; }
-    const s: AttendanceSubject = { id: crypto.randomUUID(), name: n, total: t, missed: m, minReq: r };
+    const n = (nameInputRef.current?.value ?? name).trim();
+    const t = parseInt(totalInputRef.current?.value ?? total);
+    const m = parseInt(missedInputRef.current?.value ?? missed);
+    const r = parseFloat(minReqInputRef.current?.value ?? minReq);
+    if (!n || isNaN(t) || isNaN(m) || isNaN(r)) {
+      showValidationError('fill all the fields bro');
+      return;
+    }
+    if (m > t) {
+      showValidationError('missed classes cant be more than total classes');
+      return;
+    }
+    const id = createId();
+    const s: AttendanceSubject = { id, name: n, total: t, missed: m, minReq: r };
     setSubjects((prev) => [...prev, s]);
     setName('');
     setTotal('');
     setMissed('');
+    setMinReq(String(r));
+    haptics.success();
+    revealElement(`attendance-subject-${id}`);
   };
 
-  const deleteSubject = (id: string) => setSubjects((prev) => prev.filter((s) => s.id !== id));
+  const deleteSubject = (id: string) => {
+    haptics.warning();
+    setSubjects((prev) => prev.filter((s) => s.id !== id));
+  };
 
   return (
     <div>
@@ -98,26 +123,26 @@ export default function AttendanceCalculator() {
         <div className="form-grid">
           <div className="field">
             <label>subject name</label>
-            <input type="text" value={name} onChange={(e) => setName(e.target.value)}
+            <input ref={nameInputRef} type="text" value={name} onChange={(e) => setName(e.target.value)}
               placeholder="Digital Electronics" onKeyDown={(e) => e.key === 'Enter' && addSubject()} />
           </div>
           <div className="field">
             <label>total classes held</label>
-            <input type="number" value={total} onChange={(e) => setTotal(e.target.value)}
+            <input ref={totalInputRef} type="number" value={total} onChange={(e) => setTotal(e.target.value)}
               placeholder="40" onKeyDown={(e) => e.key === 'Enter' && addSubject()} />
           </div>
           <div className="field">
             <label>classes you missed</label>
-            <input type="number" value={missed} onChange={(e) => setMissed(e.target.value)}
+            <input ref={missedInputRef} type="number" value={missed} onChange={(e) => setMissed(e.target.value)}
               placeholder="5" onKeyDown={(e) => e.key === 'Enter' && addSubject()} />
           </div>
           <div className="field">
             <label>min % required</label>
-            <input type="number" value={minReq} onChange={(e) => setMinReq(e.target.value)} />
+            <input ref={minReqInputRef} type="number" value={minReq} onChange={(e) => setMinReq(e.target.value)} />
           </div>
           <div className="field">
             <label>&nbsp;</label>
-            <button className="btn-add" style={{ background: '#ff00ff' }} onClick={addSubject}>
+            <button type="button" className="btn-add" style={{ background: '#ff00ff' }} onClick={addSubject}>
               add subject
             </button>
           </div>
@@ -162,7 +187,7 @@ function AttendanceCard({
   }
 
   return (
-    <div className="subject" style={{ borderLeftColor: isSafe ? '#00ff88' : '#ff4444' }}>
+    <div className="subject" id={`attendance-subject-${subject.id}`} style={{ borderLeftColor: isSafe ? '#00ff88' : '#ff4444' }}>
       <div className="subject-top">
         <div className="subject-name" style={{ color: isSafe ? '#00ff88' : '#ff4444' }}>
           {subject.name} {isSafe ? '✅' : '❌'}

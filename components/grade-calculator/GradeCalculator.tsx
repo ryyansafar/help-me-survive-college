@@ -4,12 +4,16 @@ import { useState, useEffect, useRef } from 'react';
 import { GRADE_THRESHOLDS, calculateRequiredESE } from '@/lib/calculators/grade';
 import type { AnySubject, Subject, MiniProjectSubject } from '@/lib/types';
 import EmptyState from '@/components/ui/EmptyState';
+import { revealElement } from '@/lib/dom/revealElement';
+import { useAppHaptics } from '@/lib/hooks/useAppHaptics';
+import { createId } from '@/lib/utils/createId';
 
 const HELP_KEY = 'grade-calc-help-state';
 
 type Preset = 'theory' | 'integrated' | 'lab' | 'mini' | null;
 
 export default function GradeCalculator() {
+  const haptics = useAppHaptics();
   const [subjects, setSubjects] = useState<AnySubject[]>([]);
   const [preset, setPreset] = useState<Preset>('theory');
   const [maxSess, setMaxSess] = useState(50);
@@ -24,6 +28,13 @@ export default function GradeCalculator() {
   const [miniTotal, setMiniTotal] = useState('150');
 
   const panelRef = useRef<HTMLDivElement>(null);
+  const subjectNameInputRef = useRef<HTMLInputElement>(null);
+  const currentMarksInputRef = useRef<HTMLInputElement>(null);
+  const maxSessInputRef = useRef<HTMLInputElement>(null);
+  const maxESEInputRef = useRef<HTMLInputElement>(null);
+  const miniNameInputRef = useRef<HTMLInputElement>(null);
+  const miniReceivedInputRef = useRef<HTMLInputElement>(null);
+  const miniTotalInputRef = useRef<HTMLInputElement>(null);
 
   // Persist help state
   useEffect(() => {
@@ -33,12 +44,19 @@ export default function GradeCalculator() {
     } catch {}
   }, []);
 
+  const showValidationError = (message: string) => {
+    haptics.error();
+    alert(message);
+  };
+
   const toggleHelp = () => {
-    setHelpOpen((prev) => {
-      const next = !prev;
-      try { localStorage.setItem(HELP_KEY, JSON.stringify({ grades: next })); } catch {}
-      return next;
-    });
+    const next = !helpOpen;
+    setHelpOpen(next);
+    try {
+      const saved = JSON.parse(localStorage.getItem(HELP_KEY) || '{}');
+      localStorage.setItem(HELP_KEY, JSON.stringify({ ...saved, grades: next }));
+    } catch {}
+    haptics.light();
   };
 
   // Animate help panel height
@@ -62,6 +80,9 @@ export default function GradeCalculator() {
   }, [helpOpen]);
 
   const applyPreset = (type: Preset) => {
+    if (type !== preset) {
+      haptics.selection();
+    }
     setPreset(type);
     if (type === 'theory')     { setMaxSess(50);  setMaxESE(100); }
     if (type === 'integrated') { setMaxSess(150); setMaxESE(100); }
@@ -69,31 +90,67 @@ export default function GradeCalculator() {
   };
 
   const addSubject = () => {
-    const name = subjectName.trim();
-    const current = parseFloat(currentMarks);
-    if (!name || isNaN(current) || isNaN(maxSess) || isNaN(maxESE)) { alert('fill all fields bro'); return; }
-    if (current > maxSess) { alert('current marks cant be more than max sessional'); return; }
-    const s: Subject = { id: crypto.randomUUID(), name, current, maxSess, maxESE, isMini: false };
+    const name = (subjectNameInputRef.current?.value ?? subjectName).trim();
+    const current = parseFloat(currentMarksInputRef.current?.value ?? currentMarks);
+    const latestMaxSess = parseFloat(maxSessInputRef.current?.value ?? String(maxSess));
+    const latestMaxESE = parseFloat(maxESEInputRef.current?.value ?? String(maxESE));
+    if (!name || isNaN(current) || isNaN(maxSess) || isNaN(maxESE)) {
+      showValidationError('fill all fields bro');
+      return;
+    }
+    if (isNaN(latestMaxSess) || isNaN(latestMaxESE)) {
+      showValidationError('fill all fields bro');
+      return;
+    }
+    if (current > latestMaxSess) {
+      showValidationError('current marks cant be more than max sessional');
+      return;
+    }
+    const id = createId();
+    const s: Subject = { id, name, current, maxSess: latestMaxSess, maxESE: latestMaxESE, isMini: false };
     setSubjects((prev) => [...prev, s]);
     setSubjectName('');
     setCurrentMarks('');
+    setMaxSess(latestMaxSess);
+    setMaxESE(latestMaxESE);
+    haptics.success();
+    revealElement(`grade-subject-${id}`);
   };
 
   const addMini = () => {
-    const name = miniName.trim();
-    const received = parseFloat(miniReceived);
-    const total = parseFloat(miniTotal);
-    if (!name || isNaN(received) || isNaN(total)) { alert('fill all the fields bro'); return; }
-    if (total <= 0) { alert('total marks cant be zero or negative'); return; }
-    if (received > total) { alert('marks received cant exceed total marks'); return; }
-    if (received < 0) { alert('marks cant be negative'); return; }
-    const s: MiniProjectSubject = { id: crypto.randomUUID(), name, received, total, isMini: true };
+    const name = (miniNameInputRef.current?.value ?? miniName).trim();
+    const received = parseFloat(miniReceivedInputRef.current?.value ?? miniReceived);
+    const total = parseFloat(miniTotalInputRef.current?.value ?? miniTotal);
+    if (!name || isNaN(received) || isNaN(total)) {
+      showValidationError('fill all the fields bro');
+      return;
+    }
+    if (total <= 0) {
+      showValidationError('total marks cant be zero or negative');
+      return;
+    }
+    if (received > total) {
+      showValidationError('marks received cant exceed total marks');
+      return;
+    }
+    if (received < 0) {
+      showValidationError('marks cant be negative');
+      return;
+    }
+    const id = createId();
+    const s: MiniProjectSubject = { id, name, received, total, isMini: true };
     setSubjects((prev) => [...prev, s]);
     setMiniName('');
     setMiniReceived('');
+    setMiniTotal(String(total));
+    haptics.success();
+    revealElement(`grade-subject-${id}`);
   };
 
-  const deleteSubject = (id: string) => setSubjects((prev) => prev.filter((s) => s.id !== id));
+  const deleteSubject = (id: string) => {
+    haptics.warning();
+    setSubjects((prev) => prev.filter((s) => s.id !== id));
+  };
 
   const updateSubject = (id: string, field: 'current' | 'maxSess', value: string) => {
     const num = parseFloat(value);
@@ -143,7 +200,7 @@ export default function GradeCalculator() {
         </div>
 
         <div className="preset-buttons">
-          <button className={`btn-preset${preset === 'theory' ? '' : ''}`}
+          <button className="btn-preset"
             style={preset === 'theory' ? { borderColor: '#00ffff', color: '#00ffff' } : {}}
             onClick={() => applyPreset('theory')}>theory course</button>
           <button className="btn-preset"
@@ -153,7 +210,7 @@ export default function GradeCalculator() {
             style={preset === 'lab' ? { borderColor: '#00ffff', color: '#00ffff' } : {}}
             onClick={() => applyPreset('lab')}>lab course</button>
           <button className={`btn-preset-mini${preset === 'mini' ? ' active' : ''}`}
-            onClick={() => setPreset('mini')}>✦ mini project</button>
+            onClick={() => applyPreset('mini')}>✦ mini project</button>
         </div>
 
         {/* Standard form */}
@@ -161,27 +218,27 @@ export default function GradeCalculator() {
           <div className="form-grid">
             <div className="field">
               <label>subject name (whatever they call it)</label>
-              <input type="text" value={subjectName} onChange={(e) => setSubjectName(e.target.value)}
+              <input ref={subjectNameInputRef} type="text" value={subjectName} onChange={(e) => setSubjectName(e.target.value)}
                 placeholder="EC600A-B2"
                 onKeyDown={(e) => e.key === 'Enter' && addSubject()} />
             </div>
             <div className="field">
               <label>your marks right now</label>
-              <input type="number" value={currentMarks} onChange={(e) => setCurrentMarks(e.target.value)}
+              <input ref={currentMarksInputRef} type="number" value={currentMarks} onChange={(e) => setCurrentMarks(e.target.value)}
                 placeholder="39"
                 onKeyDown={(e) => e.key === 'Enter' && addSubject()} />
             </div>
             <div className="field">
               <label>max sessional marks</label>
-              <input type="number" value={maxSess} onChange={(e) => setMaxSess(parseFloat(e.target.value))} />
+              <input ref={maxSessInputRef} type="number" value={maxSess} onChange={(e) => setMaxSess(parseFloat(e.target.value))} />
             </div>
             <div className="field">
               <label>max ese marks</label>
-              <input type="number" value={maxESE} onChange={(e) => setMaxESE(parseFloat(e.target.value))} />
+              <input ref={maxESEInputRef} type="number" value={maxESE} onChange={(e) => setMaxESE(parseFloat(e.target.value))} />
             </div>
             <div className="field">
               <label>&nbsp;</label>
-              <button className="btn-add" onClick={addSubject}>add subject</button>
+              <button type="button" className="btn-add" onClick={addSubject}>add subject</button>
             </div>
           </div>
         )}
@@ -195,23 +252,23 @@ export default function GradeCalculator() {
             <div className="form-grid form-grid--4">
               <div className="field">
                 <label>project name / course code</label>
-                <input type="text" value={miniName} onChange={(e) => setMiniName(e.target.value)}
+                <input ref={miniNameInputRef} type="text" value={miniName} onChange={(e) => setMiniName(e.target.value)}
                   placeholder="Mini Project S5"
                   onKeyDown={(e) => e.key === 'Enter' && addMini()} />
               </div>
               <div className="field">
                 <label>marks received</label>
-                <input type="number" value={miniReceived} onChange={(e) => setMiniReceived(e.target.value)}
+                <input ref={miniReceivedInputRef} type="number" value={miniReceived} onChange={(e) => setMiniReceived(e.target.value)}
                   placeholder="112"
                   onKeyDown={(e) => e.key === 'Enter' && addMini()} />
               </div>
               <div className="field">
                 <label>total marks</label>
-                <input type="number" value={miniTotal} onChange={(e) => setMiniTotal(e.target.value)} />
+                <input ref={miniTotalInputRef} type="number" value={miniTotal} onChange={(e) => setMiniTotal(e.target.value)} />
               </div>
               <div className="field">
                 <label>&nbsp;</label>
-                <button className="btn-add" style={{ background: '#ff55bb', color: '#0a0a0a' }} onClick={addMini}>
+                <button type="button" className="btn-add" style={{ background: '#ff55bb', color: '#0a0a0a' }} onClick={addMini}>
                   add project
                 </button>
               </div>
@@ -265,7 +322,7 @@ function SubjectCard({
   }
 
   return (
-    <div className="subject">
+    <div className="subject" id={`grade-subject-${subject.id}`}>
       <div className="subject-top">
         <div className="subject-name">{subject.name}</div>
         <button className="btn-delete" onClick={() => onDelete(subject.id)}>delete</button>
@@ -343,7 +400,7 @@ function MiniCard({ subject, onDelete }: { subject: MiniProjectSubject; onDelete
     : `failed ✗ — need at least 50% (${Math.ceil(subject.total * 0.5)} / ${subject.total}) to pass`;
 
   return (
-    <div className="subject" style={{ borderLeftColor: '#ff55bb' }}>
+    <div className="subject" id={`grade-subject-${subject.id}`} style={{ borderLeftColor: '#ff55bb' }}>
       <div className="subject-top">
         <div className="subject-name" style={{ color: '#ff55bb' }}>✦ {subject.name}</div>
         <button className="btn-delete" onClick={() => onDelete(subject.id)}>delete</button>
